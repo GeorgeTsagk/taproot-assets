@@ -528,3 +528,85 @@ func testMintAssetsWithTapscriptSibling(t *harnessTest) {
 	t.lndHarness.MineBlocksAndAssertNumTxes(1, 1)
 	t.lndHarness.AssertNumUTXOsWithConf(t.lndHarness.Bob, 1, 1, 1)
 }
+
+func testMintBatchAndTransfer(t *harnessTest) {
+	ctxb := context.Background()
+	ctxt, cancel := context.WithTimeout(ctxb, defaultWaitTimeout)
+	defer cancel()
+
+	rpcSimpleAssets := MintAssetsConfirmBatch(
+		t.t, t.lndHarness.Miner.Client, t.tapd, simpleAssets,
+	)
+
+	originalBatches, err := t.tapd.ListBatches(
+		ctxb, &mintrpc.ListBatchRequest{},
+	)
+	require.NoError(t.t, err)
+
+	// We'll make a second node now that'll be the receiver of all the
+	// assets made above.
+	secondTapd := setupTapdHarness(
+		t.t, t, t.lndHarness.Bob, t.universeServer,
+	)
+	defer func() {
+		require.NoError(t.t, secondTapd.stop(!*noDelete))
+	}()
+
+	a := rpcSimpleAssets[0]
+
+	// In order to force a split, we don't try to send the full
+	// asset.
+	addr, events := NewAddrWithEventStream(
+		t.t, secondTapd, &taprpc.NewAddrRequest{
+			AssetId:      a.AssetGenesis.AssetId,
+			Amt:          a.Amount - 1,
+			AssetVersion: a.Version,
+		},
+	)
+
+	AssertAddrCreated(t.t, secondTapd, a, addr)
+
+	sendResp, sendEvents := sendAssetsToAddr(t, t.tapd, addr)
+	sendRespJSON, err := formatProtoJSON(sendResp)
+	require.NoError(t.t, err)
+
+	t.Logf("Got response from sending assets: %v", sendRespJSON)
+
+	// Make sure that eventually we see a single event for the
+	// address.
+	AssertAddrEvent(t.t, secondTapd, addr, 1, statusDetected)
+
+	// Mine a block to make sure the events are marked as confirmed.
+	MineBlocks(t.t, t.lndHarness.Miner.Client, 1, 1)
+
+	// Eventually the event should be marked as confirmed.
+	AssertAddrEvent(t.t, secondTapd, addr, 1, statusConfirmed)
+
+	// Make sure we have imported and finalized all proofs.
+	AssertNonInteractiveRecvComplete(t.t, secondTapd, 1)
+	AssertSendEventsComplete(t.t, addr.ScriptKey, sendEvents)
+
+	// Make sure the receiver has received all events in order for
+	// the address.
+	AssertReceiveEvents(t.t, addr, events)
+
+	// Make sure the asset meta is also fetched correctly.
+	assetResp, err := secondTapd.FetchAssetMeta(
+		ctxt, &taprpc.FetchAssetMetaRequest{
+			Asset: &taprpc.FetchAssetMetaRequest_AssetId{
+				AssetId: a.AssetGenesis.AssetId,
+			},
+		},
+	)
+	require.NoError(t.t, err)
+	require.Equal(t.t, a.AssetGenesis.MetaHash, assetResp.MetaHash)
+
+	afterBatches, err := t.tapd.ListBatches(
+		ctxb, &mintrpc.ListBatchRequest{},
+	)
+	require.NoError(t.t, err)
+
+	t.Logf("originalBatches: %+v", originalBatches)
+	t.Logf("afterBatches: %+v", afterBatches)
+
+}
