@@ -30,6 +30,20 @@ type InvoiceHtlcModifier interface {
 		handler lndclient.InvoiceHtlcModifyHandler) error
 }
 
+// RfqManager is an interface that abstracts the functionalities of the rfq
+// manager that are needed by AuxInvoiceManager.
+type RfqManager interface {
+	// PeerAcceptedBuyQuotes returns buy quotes that were requested by our
+	// node and have been accepted by our peers. These quotes are
+	// exclusively available to our node for the acquisition of assets.
+	PeerAcceptedBuyQuotes() rfq.BuyAcceptMap
+
+	// LocalAcceptedSellQuotes returns sell quotes that were accepted by our
+	// node and have been requested by our peers. These quotes are
+	// exclusively available to our node for the sale of assets.
+	LocalAcceptedSellQuotes() rfq.SellAcceptMap
+}
+
 // InvoiceManagerConfig defines the configuration for the auxiliary invoice
 // manager.
 type InvoiceManagerConfig struct {
@@ -44,7 +58,7 @@ type InvoiceManagerConfig struct {
 	// RfqManager is the RFQ manager that will be used to retrieve the
 	// accepted quotes for determining the incoming value of invoice related
 	// HTLCs.
-	RfqManager *rfq.Manager
+	RfqManager RfqManager
 }
 
 // AuxInvoiceManager is a Taproot Asset auxiliary invoice manager that can be
