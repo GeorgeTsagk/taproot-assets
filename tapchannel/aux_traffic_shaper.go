@@ -124,6 +124,8 @@ func (s *AuxTrafficShaper) PaymentBandwidth(htlcBlob,
 	commitmentBlob lfn.Option[tlv.Blob], linkBandwidth,
 	htlcAmt lnwire.MilliSatoshi) (lnwire.MilliSatoshi, error) {
 
+	log.Infof("### PaymentBandwidth called")
+
 	// If the commitment or HTLC blob is not set, we don't have any
 	// information about the channel and cannot determine the available
 	// bandwidth from a taproot asset perspective. We return the link
