@@ -484,6 +484,13 @@
   Add sell-side constraint rejection unit tests for
   TestResolveRequest.
 
+- [PR#1694](https://github.com/lightninglabs/taproot-assets/pull/1694)
+  Add an integration test suite that runs the full itest suite against
+  an `lnd` backend in remote-signing (watch-only) mode, paired with a
+  separate signer `lnd` node. A dedicated CI job exercises this
+  configuration to guard against regressions in tapd's support for
+  watch-only `lnd` deployments.
+
 ## Database
 
 - [forwards table](https://github.com/lightninglabs/taproot-assets/pull/1921):
