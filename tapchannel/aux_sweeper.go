@@ -989,7 +989,7 @@ func localHtlcTimeoutSweepDesc(req lnwallet.ResolutionReq,
 			ctrlBlockBytes:      ctrlBlockBytes,
 			relativeDelay:       lfn.Some(uint64(req.CsvDelay)),
 			absoluteDelay:       lfn.Some(uint64(htlcExpiry)),
-			auxSigInfo:          req.AuxSigDesc,
+			auxSigInfo:          breachAuxSigInfo(req),
 			secondLevelSigIndex: sigIndex,
 		},
 		secondLevel: lfn.Some(secondLevelDesc),
@@ -1090,7 +1090,7 @@ func localHtlcSuccessSweepDesc(req lnwallet.ResolutionReq,
 			scriptTree:          htlcScriptTree,
 			ctrlBlockBytes:      ctrlBlockBytes,
 			relativeDelay:       lfn.Some(uint64(req.CsvDelay)),
-			auxSigInfo:          req.AuxSigDesc,
+			auxSigInfo:          breachAuxSigInfo(req),
 			secondLevelSigIndex: sigIndex,
 		},
 		secondLevel: lfn.Some(secondLevelDesc),
@@ -2013,10 +2013,170 @@ func (a *AuxSweeper) importCommitTx(req lnwallet.ResolutionReq,
 	)
 }
 
+// breachAuxSigInfo returns the AuxSigDesc for non-breach resolution
+// requests. For breach cases (Breach close type), AuxSigDesc contains
+// the HTLC-level sig for the proof import — NOT for the justice sweep.
+// Passing it to the sweep descriptor would corrupt the keyspend witness.
+func breachAuxSigInfo(
+	req lnwallet.ResolutionReq) lfn.Option[lnwallet.AuxSigDesc] {
+
+	if req.CloseType == lnwallet.Breach {
+		return lfn.None[lnwallet.AuxSigDesc]()
+	}
+
+	return req.AuxSigDesc
+}
+
+// signSecondLevelImport constructs valid asset-level witnesses for
+// second-level HTLC vPackets. If AuxSigDesc is present (breach case),
+// it signs with our local HTLC key and inserts the remote party's
+// pre-stored signature to produce a full 2-of-2 witness. If AuxSigDesc
+// is absent, falls back to a placeholder witness.
+func (a *AuxSweeper) signSecondLevelImport(
+	req lnwallet.ResolutionReq,
+	secondLevelPkts []*tappsbt.VPacket,
+	commitState *cmsg.Commitment) error {
+
+	auxSigDesc, err := req.AuxSigDesc.UnwrapOrErr(
+		fmt.Errorf("no AuxSigDesc on resolution request"),
+	)
+	if err != nil {
+		// No AuxSigDesc available — set placeholder witnesses.
+		log.Warnf("No AuxSigDesc for second-level import, " +
+			"using placeholder witnesses")
+
+		for _, vPkt := range secondLevelPkts {
+			for _, vOut := range vPkt.Outputs {
+				if vOut.Asset == nil {
+					continue
+				}
+
+				wErr := vOut.Asset.UpdateTxWitness(
+					0, wire.TxWitness{{0x01}},
+				)
+				if wErr != nil {
+					return wErr
+				}
+			}
+		}
+
+		return nil
+	}
+
+	// Determine if this is an incoming HTLC by checking which
+	// HTLC list contains the assets. The original offered/accepted
+	// type is lost after convertToSecondLevelRevoke.
+	htlcID, idErr := req.HtlcID.UnwrapOrErr(
+		fmt.Errorf("no HTLC ID for second-level sign"),
+	)
+	if idErr != nil {
+		return idErr
+	}
+	outgoing := commitState.OutgoingHtlcAssets.Val
+	isIncoming := len(outgoing.FilterByHtlcIndex(htlcID)) == 0
+
+	// Reconstruct the HTLC script tree to get the tapscript root.
+	// We use the UNTWEAKED keyring, matching the commitment
+	// creation flow.
+	payHash, pErr := req.PayHash.UnwrapOrErr(errNoPayHash)
+	if pErr != nil {
+		return pErr
+	}
+
+	htlcTimeout := req.CltvDelay.UnwrapOr(0)
+	const whoseCommit = lntypes.Remote
+
+	htlcScript, sErr := lnwallet.GenTaprootHtlcScript(
+		isIncoming, whoseCommit, htlcTimeout, payHash,
+		req.KeyRing, lfn.None[txscript.TapLeaf](),
+	)
+	if sErr != nil {
+		return fmt.Errorf("generating HTLC script: %w", sErr)
+	}
+
+	tapscriptRoot := htlcScript.TapscriptRoot
+
+	// Sign each vPacket with our local HTLC key and insert the
+	// remote party's signature.
+	signDesc := auxSigDesc.SignDetails.SignDesc
+	for vPktIdx, vPkt := range secondLevelPkts {
+		if len(vPkt.Inputs) != 1 {
+			return fmt.Errorf("expected 1 input, got %d",
+				len(vPkt.Inputs))
+		}
+
+		vIn := vPkt.Inputs[0]
+
+		// Set up the vInput for signing with our HTLC key.
+		signingKey, leafToSign := applySignDescToVIn(
+			signDesc, vIn, &a.cfg.ChainParams,
+			tapscriptRoot,
+		)
+
+		// Sign the virtual packet with our key.
+		ctxb := context.Background()
+		signed, signErr := a.cfg.Signer.SignVirtualPacket(
+			ctxb, vPkt,
+			tapfreighter.SkipInputProofVerify(),
+			tapfreighter.WithValidator(
+				&schnorrSigValidator{
+					pubKey:  signingKey,
+					tapLeaf: lfn.Some(leafToSign),
+					signMethod: input.
+						TaprootScriptSpendSignMethod,
+				},
+			),
+		)
+		if signErr != nil {
+			return fmt.Errorf("signing vPacket %d: %w",
+				vPktIdx, signErr)
+		}
+
+		if len(signed) != 1 || signed[0] != 0 {
+			return fmt.Errorf("unexpected sign result for " +
+				"vPacket")
+		}
+
+		// Now insert the remote party's signature at index 0.
+		// Our sig is at index 1 (already in the witness from
+		// SignVirtualPacket). The remote's sig goes first in
+		// the 2-of-2 witness stack.
+		assetSigs, decErr := cmsg.DecodeAssetSigListRecord(
+			auxSigDesc.AuxSig,
+		)
+		if decErr != nil {
+			return fmt.Errorf("decoding aux sigs: %w", decErr)
+		}
+
+		if vPktIdx >= len(assetSigs.Sigs) {
+			return fmt.Errorf("no aux sig for vPkt %d "+
+				"(have %d sigs)", vPktIdx,
+				len(assetSigs.Sigs))
+		}
+
+		remoteSig := assetSigs.Sigs[vPktIdx]
+		remoteSigBytes := append(
+			remoteSig.Sig.Val.RawBytes(),
+			byte(remoteSig.SigHashType.Val),
+		)
+
+		newAsset := vPkt.Outputs[0].Asset
+		prevWitness := newAsset.PrevWitnesses[0].TxWitness
+		prevWitness = slices.Insert(
+			prevWitness, 0, remoteSigBytes,
+		)
+		if wErr := newAsset.UpdateTxWitness(
+			0, prevWitness,
+		); wErr != nil {
+			return fmt.Errorf("inserting remote sig: %w", wErr)
+		}
+	}
+
+	return nil
+}
+
 // importSecondLevelHtlcTx imports the second-level HTLC transition
-// proof into the archive. The second-level tx has placeholder witnesses
-// (not valid for VM verification), so we ship with proof verification
-// skipped. The on-chain confirmation serves as proof of validity.
+// proof into the archive with valid asset-level witnesses.
 func (a *AuxSweeper) importSecondLevelHtlcTx(
 	req lnwallet.ResolutionReq,
 	secondLevelPkts []*tappsbt.VPacket,
@@ -2057,22 +2217,16 @@ func (a *AuxSweeper) importSecondLevelHtlcTx(
 			return fmt.Errorf("unable to prepare output "+
 				"assets: %w", err)
 		}
+	}
 
-		// Set a minimal witness. The tx is confirmed, so the
-		// witness just needs to be non-empty.
-		for _, vOut := range vPkt.Outputs {
-			if vOut.Asset == nil {
-				continue
-			}
-
-			err := vOut.Asset.UpdateTxWitness(
-				0, wire.TxWitness{{0x01}},
-			)
-			if err != nil {
-				return fmt.Errorf("updating witness: %w",
-					err)
-			}
-		}
+	// If the AuxSigDesc is available, construct valid asset-level
+	// witnesses by signing with our local HTLC key and combining
+	// with the remote party's pre-stored signature. This makes the
+	// proof chain fully valid and the recovered assets spendable.
+	if err := a.signSecondLevelImport(
+		req, secondLevelPkts, commitState,
+	); err != nil {
+		return fmt.Errorf("signing second-level import: %w", err)
 	}
 
 	var (
@@ -2130,15 +2284,20 @@ func (a *AuxSweeper) importSecondLevelHtlcTx(
 		heightHint = fn.Some(req.SecondLevelTxBlockHeight)
 	}
 
-	// Skip proof verification for the second-level import. The
-	// asset-level witnesses are placeholders because we don't possess
-	// the HTLC script keys needed for a valid asset witness. The
-	// BTC-level transaction is already confirmed on-chain, which
-	// serves as proof of validity.
+	// If we have AuxSigDesc, the witnesses are valid and we can
+	// verify proofs. Otherwise fall back to skipping verification
+	// for placeholder witnesses.
+	var parcelOpts []tapfreighter.PreAnchoredParcelOpt
+	if req.AuxSigDesc.IsNone() {
+		parcelOpts = append(
+			parcelOpts, tapfreighter.WithSkipProofVerify(),
+		)
+	}
+
 	return shipChannelTxn(
 		a.cfg.TxSender, secondLevelTx, outCommitments,
 		secondLevelPkts, 0, heightHint, true,
-		tapfreighter.WithSkipProofVerify(),
+		parcelOpts...
 	)
 }
 

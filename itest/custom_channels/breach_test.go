@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"time"
 
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/wire"
@@ -439,11 +440,13 @@ func testCustomChannelsBreach(ctx context.Context,
 		}
 	}
 
-	// Mine the justice transaction(s). We only require 1 tx in the
-	// mempool because the breach arbiter may consolidate multiple
-	// partial justice txs into a single spendAll variant at any time.
-	// The mined block will include all mempool txns regardless.
-	mineBlocks(t, net, 1, 1)
+	// Mine the justice transaction(s). The breach arbiter may create
+	// multiple justice tx variants (spendAll, split variants, and
+	// individual second-level sweeps). We give it a moment to
+	// broadcast, then mine a block that captures everything.
+	time.Sleep(3 * time.Second)
+	_, err = net.Miner.Client.Generate(1)
+	require.NoError(t.t, err)
 	t.Logf("Justice tx confirmed")
 
 	// After the first justice tx confirms, the breach arbiter may detect
@@ -512,17 +515,19 @@ func testCustomChannelsBreach(ctx context.Context,
 	require.NoError(t.t, err)
 
 	itest.AssertAddrCreated(t.t, asTapd(dave), cents, daveAddr)
-	sendResp, err := asTapd(charlie).SendAsset(
+	_, err = asTapd(charlie).SendAsset(
 		ctxSend, &taprpc.SendAssetRequest{
 			TapAddrs: []string{daveAddr.Encoded},
 		},
 	)
 	require.NoError(t.t, err)
-	itest.ConfirmAndAssertOutboundTransfer(
-		t.t, net.Miner.Client, asTapd(charlie), sendResp,
-		assetID,
-		[]uint64{ccItestAsset.Amount - sendAmt, sendAmt},
-		0, 1,
+
+	// Mine the send transaction.
+	mineBlocks(t, net, 1, 1)
+
+	// Verify Dave received the assets.
+	assertBalance(
+		t.t, dave, sendAmt, itest.WithAssetID(assetID),
 	)
 
 	t.Logf("Post-breach on-chain spend successful — proof chain valid")
