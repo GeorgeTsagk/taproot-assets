@@ -487,6 +487,12 @@ func testCustomChannelsBreach(ctx context.Context,
 		}
 	}
 
+	// Mine a few more blocks to trigger the porter's confirmation
+	// detection for all justice sweep transfers. The porter processes
+	// transfers sequentially and needs block notifications to complete
+	// the historical confirmation scan.
+	mineBlocks(t, net, 3, 0)
+
 	// After sweeping, Charlie should have all the asset balance back.
 	assertBalance(
 		t.t, charlie, ccItestAsset.Amount,
@@ -495,11 +501,11 @@ func testCustomChannelsBreach(ctx context.Context,
 
 	t.Logf("Charlie balance restored after breach")
 
-	// Verify the recovered assets are spendable by doing a simple
-	// on-chain send from Charlie to Dave. This proves the proof chain
+	// Verify the recovered assets are spendable by sending ALL of
+	// them from Charlie to Dave. This proves the full proof chain
 	// (funding → commitment → second-level → justice → spend) is
-	// valid end-to-end.
-	const sendAmt = 1000
+	// valid end-to-end for every recovered output.
+	sendAmt := ccItestAsset.Amount
 	ctxSend := context.Background()
 	daveAddr, err := asTapd(dave).NewAddr(
 		ctxSend, &taprpc.NewAddrRequest{
@@ -525,7 +531,7 @@ func testCustomChannelsBreach(ctx context.Context,
 	// Mine the send transaction.
 	mineBlocks(t, net, 1, 1)
 
-	// Verify Dave received the assets.
+	// Verify Dave received all the assets.
 	assertBalance(
 		t.t, dave, sendAmt, itest.WithAssetID(assetID),
 	)
