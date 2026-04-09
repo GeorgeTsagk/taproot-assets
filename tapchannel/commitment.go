@@ -1354,6 +1354,19 @@ func createSecondLevelHtlcAllocations(chanType channeldb.ChannelType,
 	// the BTC level.
 	tweakedTree := TweakHtlcTree(htlcTree, htlcIndex)
 
+	//nolint:forbidigo
+	fmt.Printf("[2NDLVL-ALLOC] htlcIdx=%d initiator=%v "+
+		"csvDelay=%d revKey=%x toLocalKey=%x "+
+		"internalKey=%x tweakedKey=%x scriptKey=%x "+
+		"numSiblings=%d\n",
+		htlcIndex, initiator, commitCsvDelay,
+		keys.RevocationKey.SerializeCompressed(),
+		keys.ToLocalKey.SerializeCompressed(),
+		htlcTree.InternalKey.SerializeCompressed(),
+		tweakedTree.InternalKey.SerializeCompressed(),
+		schnorr.SerializePubKey(tweakedTree.TaprootKey),
+		len(sibling))
+
 	log.Tracef("Tweaking second level HTLC script key with index %d: "+
 		"internal key %x -> %x, script key %x -> %x", htlcIndex,
 		htlcTree.InternalKey.SerializeCompressed(),
@@ -1490,6 +1503,30 @@ func CreateSecondLevelHtlcTx(chanState lnwallet.AuxChanState,
 	auxLeaf, err := allocations[0].AuxLeaf()
 	if err != nil {
 		return none, fmt.Errorf("error creating aux leaf: %w", err)
+	}
+
+	// Log the tap commitment for comparison.
+	for outIdx, tc := range outCommitments {
+		leaf := tc.TapLeaf()
+		//nolint:forbidigo
+		fmt.Printf("[2NDLVL-AUXLEAF] htlcIdx=%d outIdx=%d "+
+			"tapLeaf=%x auxLeaf=%x\n",
+			htlcIndex, outIdx, leaf.Script,
+			auxLeaf.TapHash())
+	}
+	for _, vPkt := range vPackets {
+		for _, vOut := range vPkt.Outputs {
+			if vOut.Asset == nil {
+				continue
+			}
+			//nolint:forbidigo
+			fmt.Printf("[2NDLVL-AUXLEAF] htlcIdx=%d "+
+				"assetScriptKey=%x assetAmt=%d\n",
+				htlcIndex,
+				vOut.Asset.ScriptKey.PubKey.
+					SerializeCompressed(),
+				vOut.Asset.Amount)
+		}
 	}
 
 	return lfn.Some(auxLeaf), nil

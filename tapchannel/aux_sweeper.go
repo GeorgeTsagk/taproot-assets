@@ -1352,9 +1352,14 @@ func assetOutputToVPacket(fundingInputProofs map[asset.ID]*proof.Proof,
 		ProofSuffix:                  &assetProof,
 	}
 
-	// While we're here, we'll also replace the transaction stored in the
-	// proof with the correct one.
+	// Replace the transaction stored in the proof with the real
+	// commitment tx, and set PrevOut to the funding outpoint (the
+	// input the commitment tx spends). The virtual proof from the
+	// commitment blob has placeholder values for these fields.
 	vOut.ProofSuffix.AnchorTx = *commitTx
+	if len(commitTx.TxIn) > 0 {
+		vOut.ProofSuffix.PrevOut = commitTx.TxIn[0].PreviousOutPoint
+	}
 
 	// Finally, we'll set the delivery address to the default courier, so
 	// we publish the proof in the specified Universe.
@@ -2072,13 +2077,16 @@ func (a *AuxSweeper) signSecondLevelImport(
 	if idErr != nil {
 		return idErr
 	}
+	// The commitment state labels HTLCs from OUR perspective:
+	// OutgoingHtlcAssets = HTLCs we offered (outgoing from us).
+	// If HTLC is not in our outgoing, it's incoming to us.
 	outgoing := commitState.OutgoingHtlcAssets.Val
 	outMatch := outgoing.FilterByHtlcIndex(htlcID)
 	isIncoming := len(outMatch) == 0
 
-	// Reconstruct the HTLC script tree to get the tapscript root.
-	// We use the UNTWEAKED keyring, matching the commitment
-	// creation flow.
+	// Reconstruct the HTLC script using the same perspective as the
+	// commitment construction: whoseCommit=Remote (this is the
+	// remote party's commitment from our view), standard key ring.
 	payHash, pErr := req.PayHash.UnwrapOrErr(errNoPayHash)
 	if pErr != nil {
 		return pErr
@@ -2108,13 +2116,20 @@ func (a *AuxSweeper) signSecondLevelImport(
 	tweakedTree := TweakHtlcTree(htlcTree, htlcID)
 	tapscriptRoot := tweakedTree.TapscriptRoot
 
-	// Use the timeout path. The AuxSig contains the remote party's
-	// (Dave's) asset-level sig for the SenderKey position, and we
-	// sign for the ReceiverKey position. Both sigs are needed for
-	// the timeout script:
-	//   <SenderKey=RemoteHtlcKey> CHECKSIGVERIFY
-	//   <ReceiverKey=LocalHtlcKey> CHECKSIG
-	scriptPath := input.ScriptPathTimeout
+	// Determine the script path based on the HTLC direction.
+	// isIncoming=true → Sender script → remote takes via timeout.
+	// isIncoming=false → Receiver script → remote takes via success.
+	var (
+		scriptPath    input.ScriptPath
+		witnessScript []byte
+	)
+	if isIncoming {
+		scriptPath = input.ScriptPathTimeout
+		witnessScript = htlcScript.TimeoutTapLeaf.Script
+	} else {
+		scriptPath = input.ScriptPathSuccess
+		witnessScript = htlcScript.SuccessTapLeaf.Script
+	}
 
 	// Compute the control block using the TWEAKED internal key.
 	ctrlBlock, cbErr := htlcScript.CtrlBlockForPath(scriptPath)
@@ -2133,7 +2148,7 @@ func (a *AuxSweeper) signSecondLevelImport(
 	// Sign each vPacket with our local HTLC key and insert the
 	// remote party's signature.
 	signDesc := auxSigDesc.SignDetails.SignDesc
-	signDesc.WitnessScript = htlcScript.TimeoutTapLeaf.Script
+	signDesc.WitnessScript = witnessScript
 
 	for vPktIdx, vPkt := range secondLevelPkts {
 		if len(vPkt.Inputs) != 1 {
@@ -2152,6 +2167,17 @@ func (a *AuxSweeper) signSecondLevelImport(
 		if len(vIn.TaprootLeafScript) > 0 {
 			vIn.TaprootLeafScript[0].ControlBlock = ctrlBlockBytes
 		}
+
+		//nolint:forbidigo
+		fmt.Printf("[SIG-DEBUG] signSecondLevelImport: "+
+			"witnessScript=%x isIncoming=%v "+
+			"signingKey=%x tapscriptRoot=%x "+
+			"htlcIdx=%d\n",
+			signDesc.WitnessScript,
+			isIncoming,
+			signingKey.SerializeCompressed(),
+			tapscriptRoot,
+			htlcID)
 
 		// Sign the virtual packet with our key.
 		ctxb := context.Background()
@@ -2305,6 +2331,14 @@ func (a *AuxSweeper) importSecondLevelHtlcTx(
 			}
 
 			vPkt.Outputs[outIdx].ProofSuffix = proofSuffix
+
+			//nolint:forbidigo
+			fmt.Printf("[PROOF-DEBUG] 2nd-level suffix: "+
+				"PrevOut=%v, AnchorTx=%v, "+
+				"inputPrevID=%v\n",
+				proofSuffix.PrevOut,
+				proofSuffix.AnchorTx.TxHash(),
+				vPkt.Inputs[0].PrevID.OutPoint)
 		}
 	}
 
@@ -2321,8 +2355,12 @@ func (a *AuxSweeper) importSecondLevelHtlcTx(
 		secondLevelPkts, 0, heightHint, true,
 		parcelOpts...,
 	)
+	//nolint:forbidigo
 	if err != nil {
+		fmt.Printf("[IMPORT-2ND] shipChannelTxn FAILED: %v\n", err)
 	} else {
+		fmt.Printf("[IMPORT-2ND] shipChannelTxn SUCCESS for %v\n",
+			secondLevelTx.TxHash())
 	}
 
 	return err
@@ -2630,11 +2668,13 @@ func (a *AuxSweeper) resolveContract(
 		// output assets with the correct second-level script keys.
 		// The proofs from commitAssetOutputs are now re-anchored
 		// with the correct block headers.
+		//
 		secondLevelPkts, secondLevelAllocs, err :=
 			CreateSecondLevelHtlcPackets(
-				auxChanState, req.CommitTx, req.HtlcAmt,
-				*req.KeyRing, &a.cfg.ChainParams,
-				assetOutputs, cltvTimeout, htlcID,
+				auxChanState, req.CommitTx,
+				req.HtlcAmt, *req.KeyRing,
+				&a.cfg.ChainParams, assetOutputs,
+				cltvTimeout, htlcID,
 			)
 		if err != nil {
 			return lfn.Errf[returnType]("unable to create "+
@@ -2664,6 +2704,46 @@ func (a *AuxSweeper) resolveContract(
 				"output commitments: %w", err)
 		}
 
+		// Log the output commitment and on-chain pkScript for
+		// comparison with what Dave published.
+		if req.SecondLevelTx != nil &&
+			len(req.SecondLevelTx.TxOut) > 0 {
+
+			onChainPkScript := req.SecondLevelTx.TxOut[0].
+				PkScript
+			//nolint:forbidigo
+			fmt.Printf("[2NDLVL-COMPARE] htlcIdx=%d "+
+				"onChainPkScript=%x "+
+				"numCommitments=%d\n",
+				htlcID, onChainPkScript,
+				len(outCommitments))
+
+			for outIdx, tc := range outCommitments {
+				root := tc.TapLeaf()
+				//nolint:forbidigo
+				fmt.Printf("[2NDLVL-COMPARE] "+
+					"outIdx=%d "+
+					"tapLeaf=%x\n",
+					outIdx, root.Script)
+			}
+
+			for _, vPkt := range secondLevelPkts {
+				for _, vOut := range vPkt.Outputs {
+					if vOut.Asset == nil {
+						continue
+					}
+					//nolint:forbidigo
+					fmt.Printf("[2NDLVL-COMPARE] "+
+						"assetScriptKey=%x "+
+						"assetAmt=%d\n",
+						vOut.Asset.ScriptKey.
+							PubKey.
+							SerializeCompressed(),
+						vOut.Asset.Amount)
+				}
+			}
+		}
+
 		// Import the second-level tx into the proof archive. This
 		// creates the commitment → second-level proof transition
 		// so the sweep can build a valid proof chain.
@@ -2678,11 +2758,15 @@ func (a *AuxSweeper) resolveContract(
 				secondLevelAllocs, outCommitments,
 				commitState,
 			)
+			//nolint:forbidigo
 			if importErr != nil {
+				fmt.Printf("[IMPORT-ERR] %v\n", importErr)
 				log.Errorf("Unable to import "+
 					"second-level HTLC "+
 					"tx: %v", importErr)
 			} else {
+				fmt.Printf("[IMPORT-OK] 2nd-level import "+
+					"succeeded\n")
 			}
 		}
 
@@ -2703,37 +2787,38 @@ func (a *AuxSweeper) resolveContract(
 
 			outAsset := vPkt.Outputs[0].Asset
 
-			// Create a proof using the commitment-level proof
-			// as base, updated with the second-level asset.
+			// Create a proof stub for the second-level output.
+			// We start from the commitment-level proof and
+			// update it to reference the second-level tx as
+			// the anchor. The PrevOut stays as the commitment
+			// HTLC outpoint (the input the second-level tx
+			// spends), and AnchorTx becomes the second-level
+			// tx. This way the proof's OutPoint() correctly
+			// returns the second-level tx output.
 			secondLevelProof := assetOutputs[i].Proof.Val
 			secondLevelProof.Asset = *outAsset
 
-			// Update the proof's outpoint to reference the
-			// second-level tx output.
 			if req.SecondLevelTx != nil {
 				stx := req.SecondLevelTx
-				stxHash := stx.TxHash()
+
+				// Set AnchorTx to the second-level tx
+				// so OutPoint() returns the correct
+				// second-level outpoint.
+				secondLevelProof.AnchorTx = *stx
 
 				// For SigHashDefault, the second-level
 				// tx is deterministic (1 input, 1
 				// output), so we use index 0. For
-				// legacy (SigHashSingle|AnyoneCanPay),
-				// the sweeper may attach wallet inputs
-				// and a change output; we find the HTLC
-				// output by matching the expected
-				// taproot pkScript from the sweep
-				// descriptor.
+				// legacy, find the HTLC output by
+				// matching the pkScript.
 				htlcOutIdx := uint32(0)
 				if len(stx.TxOut) > 1 {
 					htlcOutIdx = findHTLCOutput(
 						stx, outAsset,
 					)
 				}
-
-				secondLevelProof.PrevOut = wire.OutPoint{
-					Hash:  stxHash,
-					Index: htlcOutIdx,
-				}
+				secondLevelProof.InclusionProof.OutputIndex =
+					htlcOutIdx
 			}
 
 			secondLevelAssetOutputs = append(
@@ -2825,9 +2910,10 @@ func (a *AuxSweeper) resolveContract(
 	// instead of the commitment tx.
 	isSecondLevelRevoke := req.Type == input.TaprootHtlcSecondLevelRevoke
 	if !isSecondLevelRevoke {
-		// For second-level revocations, the proof's PrevOut is set
-		// directly in the asset output creation above. For all other
-		// types, re-anchor to the commitment tx.
+		// For second-level revocations, the proof's AnchorTx and
+		// OutputIndex are set in the morph block above to reference
+		// the second-level tx. For all other types, re-anchor to the
+		// commitment tx.
 		if err := reanchorAssetOutputs(
 			ctx, a.cfg.ChainBridge, commitTx,
 			req.CommitTxBlockHeight, assetOutputs,
