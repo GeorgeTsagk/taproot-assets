@@ -89,7 +89,6 @@ type verifyOptions struct {
 	// skipTimeLockValidationForFinalProof skips locktime checks for the
 	// final proof in a file.
 	skipTimeLockValidationForFinalProof bool
-
 }
 
 // defaultVerifyOptions returns a default set of proof verification options.
@@ -910,7 +909,6 @@ func WithSkipTimeLockValidation() ProofVerificationOption {
 		p.SkipTimeLockValidation = true
 	}
 }
-
 
 // Verify verifies the proof by ensuring that:
 //

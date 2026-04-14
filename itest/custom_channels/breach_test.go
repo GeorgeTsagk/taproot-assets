@@ -91,7 +91,7 @@ func testCustomChannelsBreach(ctx context.Context,
 	// Now we'll make an asset for Charlie that we'll use in the test to
 	// open a channel.
 	mintedAssets := itest.MintAssetsConfirmBatch(
-		t.t, net.Miner.Client, asTapd(charlie),
+		t.t, net.Miner, asTapd(charlie),
 		[]*mintrpc.MintAssetRequest{
 			{
 				Asset: ccItestAsset,
@@ -325,17 +325,13 @@ func testCustomChannelsBreach(ctx context.Context,
 	var allBlocks []*wire.MsgBlock
 	for mined := uint32(0); mined < totalBlocks; {
 		// Check mempool before mining the next batch.
-		mempool, mempoolErr := net.Miner.Client.GetRawMempool()
-		require.NoError(t.t, mempoolErr)
+		mempool := net.Miner.GetRawMempool()
 		if len(mempool) > 0 {
 			t.Logf("Mempool has %d txns at height offset %d",
 				len(mempool), mined)
 			for _, txid := range mempool {
-				rawTx, txErr := net.Miner.Client.
+				rawTx := net.Miner.
 					GetRawTransaction(txid)
-				if txErr != nil {
-					continue
-				}
 				tx := rawTx.MsgTx()
 				for _, txIn := range tx.TxIn {
 					if txIn.PreviousOutPoint.Hash ==
@@ -387,8 +383,7 @@ func testCustomChannelsBreach(ctx context.Context,
 		"expected second-level HTLC transactions")
 
 	// Log the breach tx outputs for reference.
-	breachTx, err := net.Miner.Client.GetRawTransaction(breachTxid)
-	require.NoError(t.t, err)
+	breachTx := net.Miner.GetRawTransaction(*breachTxid)
 	for i, out := range breachTx.MsgTx().TxOut {
 		t.Logf("Breach output %d: value=%d pkscript=%x",
 			i, out.Value, out.PkScript)
@@ -412,12 +407,12 @@ func testCustomChannelsBreach(ctx context.Context,
 	// another for second-level HTLC outputs.
 	t.Logf("Waiting for Charlie's justice txns in mempool...")
 	charlieJusticeTxids, err := waitForNTxsInMempool(
-		net.Miner.Client, 2, wait.MinerMempoolTimeout,
+		net.Miner, 2, wait.MinerMempoolTimeout,
 	)
 	if err != nil {
 		// If we don't find 2, try with 1.
 		charlieJusticeTxids, err = waitForNTxsInMempool(
-			net.Miner.Client, 1, wait.MinerMempoolTimeout,
+			net.Miner, 1, wait.MinerMempoolTimeout,
 		)
 	}
 	require.NoError(t.t, err,
@@ -428,7 +423,7 @@ func testCustomChannelsBreach(ctx context.Context,
 	// Log justice tx details. The BRAR may replace txs between our
 	// mempool query and the GetRawTransaction call, so tolerate errors.
 	for _, txid := range charlieJusticeTxids {
-		justiceTx, jErr := net.Miner.Client.GetRawTransaction(txid)
+		justiceTx, jErr := net.Miner.GetRawTransactionNoAssert(*txid)
 		if jErr != nil {
 			t.Logf("Justice tx %v no longer in mempool "+
 				"(likely replaced): %v", txid, jErr)
@@ -450,12 +445,10 @@ func testCustomChannelsBreach(ctx context.Context,
 	// multiple justice tx variants (spendAll, split variants, and
 	// individual second-level sweeps). Poll the mempool briefly in
 	// case more txs arrive, then mine a block.
-	mempool, mErr := net.Miner.Client.GetRawMempool()
-	require.NoError(t.t, mErr)
+	mempoolTxs := net.Miner.GetRawMempool()
 	t.Logf("Mempool has %d txs before mining justice block",
-		len(mempool))
-	_, err = net.Miner.Client.Generate(1)
-	require.NoError(t.t, err)
+		len(mempoolTxs))
+	net.Miner.GenerateBlocks(1)
 	t.Logf("Justice tx confirmed")
 
 	// After the first justice tx confirms, the breach arbiter may detect
@@ -472,11 +465,10 @@ func testCustomChannelsBreach(ctx context.Context,
 
 		if len(mp) > 0 {
 			t.Logf("Found %d txns in mempool after %d blocks:",
-				len(mempool), i)
-			for _, txid := range mempool {
-				raw, rErr := net.Miner.Client.
+				len(mp), i)
+			for _, txid := range mp {
+				raw := net.Miner.
 					GetRawTransaction(txid)
-				require.NoError(t.t, rErr)
 				tx := raw.MsgTx()
 				t.Logf("  tx %v: %d inputs, %d outputs",
 					txid, len(tx.TxIn), len(tx.TxOut))

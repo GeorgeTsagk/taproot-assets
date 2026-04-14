@@ -9,7 +9,6 @@ import (
 
 	"github.com/btcsuite/btcd/chaincfg"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
-	"github.com/btcsuite/btcd/rpcclient"
 	"github.com/go-errors/errors"
 	"github.com/lightninglabs/lndclient"
 	"github.com/lightninglabs/taproot-assets/proof"
@@ -17,6 +16,7 @@ import (
 	unirpc "github.com/lightninglabs/taproot-assets/taprpc/universerpc"
 	"github.com/lightningnetwork/lnd/build"
 	"github.com/lightningnetwork/lnd/lntest"
+	lnminer "github.com/lightningnetwork/lnd/lntest/miner"
 	"github.com/lightningnetwork/lnd/lntest/node"
 	"github.com/lightningnetwork/lnd/lntest/port"
 	"github.com/lightningnetwork/lnd/lntest/wait"
@@ -491,25 +491,20 @@ func setupTapdHarness(t *testing.T, ht *harnessTest,
 
 // isMempoolEmpty checks whether the mempool remains empty for the given
 // timeout.
-func isMempoolEmpty(miner *rpcclient.Client, timeout time.Duration) (bool,
+func isMempoolEmpty(m *lnminer.HarnessMiner, timeout time.Duration) (bool,
 	error) {
 
 	breakTimeout := time.After(timeout)
 	ticker := time.NewTicker(50 * time.Millisecond)
 	defer ticker.Stop()
 
-	var err error
-	var mempool []*chainhash.Hash
 	for {
 		select {
 		case <-breakTimeout:
 			return true, nil
 
 		case <-ticker.C:
-			mempool, err = miner.GetRawMempool()
-			if err != nil {
-				return false, err
-			}
+			mempool := m.GetRawMempool()
 			if len(mempool) > 0 {
 				return false, nil
 			}
@@ -520,28 +515,28 @@ func isMempoolEmpty(miner *rpcclient.Client, timeout time.Duration) (bool,
 // WaitForNTxsInMempool polls until finding the desired number of transactions
 // in the provided miner's mempool. An error is returned if this number is not
 // met after the given timeout.
-func WaitForNTxsInMempool(miner *rpcclient.Client, n int,
+func WaitForNTxsInMempool(m *lnminer.HarnessMiner, n int,
 	timeout time.Duration) ([]*chainhash.Hash, error) {
 
 	breakTimeout := time.After(timeout)
 	ticker := time.NewTicker(50 * time.Millisecond)
 	defer ticker.Stop()
 
-	var err error
-	var mempool []*chainhash.Hash
+	var mempool []chainhash.Hash
 	for {
 		select {
 		case <-breakTimeout:
 			return nil, fmt.Errorf("wanted %v, found %v txs "+
 				"in mempool: %v", n, len(mempool), mempool)
 		case <-ticker.C:
-			mempool, err = miner.GetRawMempool()
-			if err != nil {
-				return nil, err
-			}
+			mempool = m.GetRawMempool()
 
 			if len(mempool) == n {
-				return mempool, nil
+				result := make([]*chainhash.Hash, len(mempool))
+				for i := range mempool {
+					result[i] = &mempool[i]
+				}
+				return result, nil
 			}
 		}
 	}

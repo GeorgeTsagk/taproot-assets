@@ -2347,7 +2347,6 @@ func (a *AuxSweeper) signSecondLevelImport(
 		); wErr != nil {
 			return fmt.Errorf("updating witness: %w", wErr)
 		}
-
 	}
 
 	return nil
@@ -2874,7 +2873,7 @@ func (a *AuxSweeper) resolveContract(
 				if req.SecondLevelTx != nil &&
 					req.SecondLevelTxBlockHeight > 0 {
 
-					stxParams, ppErr := proofParamsForCommitTx(
+					stxParams, ppErr := proofParamsForCommitTx( //nolint:lll
 						ctxImport,
 						a.cfg.ChainBridge,
 						req.SecondLevelTxBlockHeight,
@@ -2886,7 +2885,7 @@ func (a *AuxSweeper) resolveContract(
 							"2nd-level tx: %v",
 							ppErr)
 					} else {
-						upErr := vOut.ProofSuffix.UpdateTransitionProof(
+						upErr := vOut.ProofSuffix.UpdateTransitionProof( //nolint:lll
 							&stxParams,
 						)
 						if upErr != nil {
@@ -2922,10 +2921,10 @@ func (a *AuxSweeper) resolveContract(
 
 					if len(stx.TxIn) > 0 {
 						secondLevelProof.PrevOut =
-							stx.TxIn[0].PreviousOutPoint
+							stx.TxIn[0].PreviousOutPoint //nolint:lll
 					}
 
-					secondLevelProof.InclusionProof.OutputIndex = 0
+					secondLevelProof.InclusionProof.OutputIndex = 0 //nolint:lll
 				}
 
 				log.Warnf("No proof suffix for "+
@@ -3611,8 +3610,8 @@ func (a *AuxSweeper) registerAndBroadcastSweep(req *sweep.BumpRequest,
 					}
 					proofBlob, err := a.cfg.
 						ProofArchive.FetchProof(
-							ctx, locator,
-						)
+						ctx, locator,
+					)
 					if err != nil {
 						log.Warnf("Unable to "+
 							"lookup input "+

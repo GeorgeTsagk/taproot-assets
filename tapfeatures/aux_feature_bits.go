@@ -35,10 +35,10 @@ const (
 
 // featureNames keeps track of the string description of known features.
 var featureNames = map[lnwire.FeatureBit]string{
-	NoOpHTLCsRequired:           "noop-htlcs",
-	NoOpHTLCsOptional:           "noop-htlcs",
-	STXORequired:                "stxo-proofs",
-	STXOOptional:                "stxo-proofs",
+	NoOpHTLCsRequired:          "noop-htlcs",
+	NoOpHTLCsOptional:          "noop-htlcs",
+	STXORequired:               "stxo-proofs",
+	STXOOptional:               "stxo-proofs",
 	DeterministicHTLCsRequired: "deterministic-htlcs",
 	DeterministicHTLCsOptional: "deterministic-htlcs",
 }

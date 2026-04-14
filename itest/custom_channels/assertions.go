@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
-	"github.com/btcsuite/btcd/rpcclient"
 	"github.com/btcsuite/btcd/wire"
 	"github.com/go-errors/errors"
 	"github.com/lightninglabs/taproot-assets/itest"
@@ -16,6 +15,7 @@ import (
 	"github.com/lightningnetwork/lnd/lnrpc"
 	"github.com/lightningnetwork/lnd/lnrpc/walletrpc"
 	"github.com/lightningnetwork/lnd/lntest"
+	lnminer "github.com/lightningnetwork/lnd/lntest/miner"
 	"github.com/lightningnetwork/lnd/lntest/wait"
 	"github.com/stretchr/testify/require"
 )
@@ -293,38 +293,30 @@ func mineBlocksSlow(t *ccHarnessTest, net *itest.IntegratedNetworkHarness,
 
 	// If we expect transactions in the first block, wait for them in the
 	// mempool.
-	var txids []*chainhash.Hash
-	var err error
+	var txids []chainhash.Hash
 	if numTxs > 0 {
-		txids, err = waitForNTxsInMempool(
-			net.Miner.Client, numTxs,
-			wait.MinerMempoolTimeout,
-		)
-		require.NoError(t.t, err, "unable to find txns in mempool")
+		txids = net.Miner.AssertNumTxsInMempool(numTxs)
 	}
 
 	blocks := make([]*wire.MsgBlock, num)
 	blockHashes := make([]*chainhash.Hash, 0, num)
 
 	for i := uint32(0); i < num; i++ {
-		generatedHashes, err := net.Miner.Client.Generate(1)
-		require.NoError(t.t, err, "generate blocks")
+		generatedHashes := net.Miner.GenerateBlocks(1)
 		blockHashes = append(blockHashes, generatedHashes...)
 
 		time.Sleep(slowMineDelay)
 	}
 
 	for i, blockHash := range blockHashes {
-		block, err := net.Miner.Client.GetBlock(blockHash)
-		require.NoError(t.t, err, "get blocks")
-
-		blocks[i] = block
+		blocks[i] = net.Miner.GetBlock(blockHash)
 	}
 
 	// Assert that all the expected transactions were included in the first
 	// block.
 	for _, txid := range txids {
-		assertTxInBlock(t, blocks[0], txid)
+		txidPtr := txid
+		assertTxInBlock(t, blocks[0], &txidPtr)
 	}
 
 	return blocks
@@ -332,28 +324,30 @@ func mineBlocksSlow(t *ccHarnessTest, net *itest.IntegratedNetworkHarness,
 
 // waitForNTxsInMempool polls until finding the desired number of transactions
 // in the miner's mempool.
-func waitForNTxsInMempool(minerClient *rpcclient.Client, n int,
+func waitForNTxsInMempool(m *lnminer.HarnessMiner, n int,
 	timeout time.Duration) ([]*chainhash.Hash, error) {
 
 	breakTimeout := time.After(timeout)
 	ticker := time.NewTicker(50 * time.Millisecond)
 	defer ticker.Stop()
 
-	var err error
-	var mempool []*chainhash.Hash
+	var mempool []chainhash.Hash
 	for {
 		select {
 		case <-breakTimeout:
 			return nil, fmt.Errorf("wanted %v, found %v txs "+
 				"in mempool: %v", n, len(mempool), mempool)
 		case <-ticker.C:
-			mempool, err = minerClient.GetRawMempool()
-			if err != nil {
-				return nil, err
-			}
+			mempool = m.GetRawMempool()
 
 			if len(mempool) == n {
-				return mempool, nil
+				result := make(
+					[]*chainhash.Hash, len(mempool),
+				)
+				for i := range mempool {
+					result[i] = &mempool[i]
+				}
+				return result, nil
 			}
 		}
 	}
