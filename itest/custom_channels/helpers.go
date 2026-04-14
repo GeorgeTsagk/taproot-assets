@@ -1871,7 +1871,7 @@ func createTestAssetNetwork(t *ccHarnessTest,
 	})
 	require.NoError(t.t, err)
 	itest.ConfirmAndAssertOutboundTransfer(
-		t.t, net.Miner.Client, asTapd(charlie), sendResp, assetID,
+		t.t, net.Miner, asTapd(charlie), sendResp, assetID,
 		[]uint64{mintedAsset.Amount - assetSendAmount, assetSendAmount},
 		0, 1,
 	)
@@ -1896,7 +1896,7 @@ func createTestAssetNetwork(t *ccHarnessTest,
 	})
 	require.NoError(t.t, err)
 	itest.ConfirmAndAssertOutboundTransfer(
-		t.t, net.Miner.Client, asTapd(charlie), sendResp, assetID,
+		t.t, net.Miner, asTapd(charlie), sendResp, assetID,
 		[]uint64{
 			mintedAsset.Amount - 2*assetSendAmount, assetSendAmount,
 		}, 1, 2,
@@ -2967,7 +2967,7 @@ func assertForceCloseSweeps(ctx context.Context,
 	)
 
 	_, err = waitForNTxsInMempool(
-		net.Miner.Client, 1, ccShortTimeout,
+		net.Miner, 1, ccShortTimeout,
 	)
 	require.NoError(t.t, err)
 
@@ -2981,7 +2981,7 @@ func assertForceCloseSweeps(ctx context.Context,
 	// mempool: Bob's incoming HTLC sweep directly off the commitment
 	// transaction.
 	_, err = waitForNTxsInMempool(
-		net.Miner.Client, 1, ccShortTimeout,
+		net.Miner, 1, ccShortTimeout,
 	)
 	require.NoError(t.t, err)
 
@@ -3017,7 +3017,7 @@ func assertForceCloseSweeps(ctx context.Context,
 	mineBlocks(t, net, 1, 0)
 
 	_, err = waitForNTxsInMempool(
-		net.Miner.Client, 1, ccShortTimeout,
+		net.Miner, 1, ccShortTimeout,
 	)
 	require.NoError(t.t, err)
 
@@ -3064,7 +3064,7 @@ func assertForceCloseSweeps(ctx context.Context,
 	// one final block which will confirm Alice's sweep transaction.
 	if len(sweepBlocks[0].Transactions) == 1 {
 		_, err := waitForNTxsInMempool(
-			net.Miner.Client, 1, ccShortTimeout,
+			net.Miner, 1, ccShortTimeout,
 		)
 		require.NoError(t.t, err)
 
@@ -3101,7 +3101,7 @@ func assertForceCloseSweeps(ctx context.Context,
 	// one final block which will confirm Alice's sweep transaction.
 	if len(sweepBlocks[0].Transactions) == 1 {
 		_, err := waitForNTxsInMempool(
-			net.Miner.Client, 1, ccShortTimeout,
+			net.Miner, 1, ccShortTimeout,
 		)
 		require.NoError(t.t, err)
 
@@ -3146,7 +3146,7 @@ func assertForceCloseSweeps(ctx context.Context,
 	t.Logf("Confirming initial HTLC timeout txns")
 
 	timeoutSweeps, err := waitForNTxsInMempool(
-		net.Miner.Client, 2, wait.DefaultTimeout,
+		net.Miner, 2, wait.DefaultTimeout,
 	)
 	require.NoError(t.t, err)
 
@@ -3198,7 +3198,7 @@ func assertForceCloseSweeps(ctx context.Context,
 		t.Logf("Confirming additional HTLC timeout sweep txns")
 
 		additionalTimeoutSweeps, err := waitForNTxsInMempool(
-			net.Miner.Client, 1, ccShortTimeout,
+			net.Miner, 1, ccShortTimeout,
 		)
 		require.NoError(t.t, err)
 
@@ -3239,7 +3239,7 @@ func assertForceCloseSweeps(ctx context.Context,
 	// one final block which will confirm Alice's sweep transaction.
 	if len(sweepBlocks[0].Transactions) == 1 {
 		_, err := waitForNTxsInMempool(
-			net.Miner.Client, 1, ccShortTimeout,
+			net.Miner, 1, ccShortTimeout,
 		)
 		require.NoError(t.t, err)
 
@@ -3303,7 +3303,7 @@ func sendAssetsAndAssert(ctx context.Context, t *ccHarnessTest,
 	)
 	require.NoError(t.t, err)
 	itest.ConfirmAndAssertOutboundTransfer(
-		t.t, t.lndHarness.Miner.Client, asTapd(sender), sendResp,
+		t.t, t.lndHarness.Miner, asTapd(sender), sendResp,
 		assetID,
 		[]uint64{mintedAsset.Amount - totalSent, assetSendAmount},
 		idx, idx+1,
@@ -3611,7 +3611,7 @@ func createTestMultiRFQAssetNetwork(t *ccHarnessTest,
 		)
 		require.NoError(t.t, err)
 		itest.ConfirmAndAssertOutboundTransfer(
-			t.t, net.Miner.Client, asTapd(charlie), sendResp,
+			t.t, net.Miner, asTapd(charlie), sendResp,
 			assetID,
 			[]uint64{
 				mintedAsset.Amount -

@@ -36,17 +36,18 @@ func testAuthMailboxStoreAndFetchMessage(t *harnessTest) {
 	)
 	require.NoError(t.t, err)
 
-	txHash, err := t.lndHarness.Miner().SendOutputs([]*wire.TxOut{
-		{
-			Value:    100000,
-			PkScript: pkScriptBip86,
-		},
-		{
-			Value:    100000,
-			PkScript: pkScriptTapscript,
-		},
-	}, 10)
-	require.NoError(t.t, err)
+	txHash := t.lndHarness.Miner().SendOutputsWithoutChange(
+		[]*wire.TxOut{
+			{
+				Value:    100000,
+				PkScript: pkScriptBip86,
+			},
+			{
+				Value:    100000,
+				PkScript: pkScriptTapscript,
+			},
+		}, 10,
+	)
 
 	blockHash := t.lndHarness.Miner().GenerateBlocks(1)[0]
 	bestBlockHash, blockHeight := t.lndHarness.Miner().GetBestBlock()

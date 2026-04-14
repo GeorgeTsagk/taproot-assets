@@ -16,7 +16,6 @@ import (
 	"github.com/btcsuite/btcd/btcec/v2/schnorr"
 	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
-	"github.com/btcsuite/btcd/rpcclient"
 	"github.com/btcsuite/btcd/wire"
 	"github.com/lightninglabs/taproot-assets/address"
 	"github.com/lightninglabs/taproot-assets/asset"
@@ -35,6 +34,7 @@ import (
 	unirpc "github.com/lightninglabs/taproot-assets/taprpc/universerpc"
 	"github.com/lightninglabs/taproot-assets/universe"
 	"github.com/lightningnetwork/lnd/lnrpc/chainrpc"
+	"github.com/lightningnetwork/lnd/lntest/miner"
 	"github.com/lightningnetwork/lnd/lntest/wait"
 	"github.com/lightningnetwork/lnd/lntypes"
 	"github.com/lightningnetwork/lnd/lnwallet/chainfee"
@@ -380,7 +380,7 @@ func AssertTxInBlock(t *testing.T, block *wire.MsgBlock,
 
 // AssertTransferFeeRate checks that fee paid for the TX anchoring an asset
 // transfer is close to the expected fee for that TX, at a given fee rate.
-func AssertTransferFeeRate(t *testing.T, minerClient *rpcclient.Client,
+func AssertTransferFeeRate(t *testing.T, minerClient *miner.HarnessMiner,
 	transferResp *taprpc.SendAssetResponse, inputAmt int64,
 	feeRate chainfee.SatPerKWeight) {
 
@@ -392,7 +392,7 @@ func AssertTransferFeeRate(t *testing.T, minerClient *rpcclient.Client,
 
 // AssertFeeRate checks that the fee paid for a given TX is close to the
 // expected fee for the same TX, at a given fee rate.
-func AssertFeeRate(t *testing.T, minerClient *rpcclient.Client, inputAmt int64,
+func AssertFeeRate(t *testing.T, minerClient *miner.HarnessMiner, inputAmt int64,
 	txid *chainhash.Hash, feeRate chainfee.SatPerKWeight) {
 
 	var (
@@ -401,8 +401,7 @@ func AssertFeeRate(t *testing.T, minerClient *rpcclient.Client, inputAmt int64,
 		maxVsizeDifference          = lntypes.VByte(2)
 	)
 
-	verboseTx, err := minerClient.GetRawTransactionVerbose(txid)
-	require.NoError(t, err)
+	verboseTx := minerClient.GetRawTransactionVerbose(*txid)
 
 	vsize := verboseTx.Vsize
 	weight := verboseTx.Weight
@@ -1195,7 +1194,7 @@ func AssertMintEvents(t *testing.T, batchKey []byte,
 // the correct state before confirming it and then asserting the confirmed state
 // with the node.
 func ConfirmAndAssertOutboundTransfer(t *testing.T,
-	minerClient *rpcclient.Client, sender commands.RpcClientsBundle,
+	minerClient *miner.HarnessMiner, sender commands.RpcClientsBundle,
 	sendResp *taprpc.SendAssetResponse, assetID []byte,
 	expectedAmounts []uint64, currentTransferIdx,
 	numTransfers int) *wire.MsgBlock {
@@ -1210,7 +1209,7 @@ func ConfirmAndAssertOutboundTransfer(t *testing.T,
 // transfer has the correct state and number of outputs before confirming it and
 // then asserting the confirmed state with the node.
 func ConfirmAndAssertOutboundTransferWithOutputs(t *testing.T,
-	minerClient *rpcclient.Client, sender commands.RpcClientsBundle,
+	minerClient *miner.HarnessMiner, sender commands.RpcClientsBundle,
 	sendResp *taprpc.SendAssetResponse, assetID []byte,
 	expectedAmounts []uint64, currentTransferIdx,
 	numTransfers, numOutputs int) *wire.MsgBlock {
@@ -1225,7 +1224,7 @@ func ConfirmAndAssertOutboundTransferWithOutputs(t *testing.T,
 // AssertAssetOutboundTransferWithOutputs makes sure the given outbound transfer
 // has the correct state and number of outputs.
 func AssertAssetOutboundTransferWithOutputs(t *testing.T,
-	minerClient *rpcclient.Client, sender commands.RpcClientsBundle,
+	minerClient *miner.HarnessMiner, sender commands.RpcClientsBundle,
 	transfer *taprpc.AssetTransfer, inputAssetIDs [][]byte,
 	expectedAmounts []uint64, currentTransferIdx,
 	numTransfers, numOutputs int, confirm bool) *wire.MsgBlock {
@@ -2749,7 +2748,7 @@ func LargestUtxo(t *testing.T, client taprpc.TaprootAssetsClient,
 // UpdateAndMineSupplyCommit updates the on-chain supply commitment for an asset
 // group and mines the commitment transaction.
 func UpdateAndMineSupplyCommit(t *testing.T, ctx context.Context,
-	tapd unirpc.UniverseClient, miner *rpcclient.Client,
+	tapd unirpc.UniverseClient, m *miner.HarnessMiner,
 	groupKeyBytes []byte, expectedTxsInBlock int) []*wire.MsgBlock {
 
 	groupKeyUpdate := &unirpc.UpdateSupplyCommitRequest_GroupKeyBytes{
@@ -2765,7 +2764,7 @@ func UpdateAndMineSupplyCommit(t *testing.T, ctx context.Context,
 	require.NotNil(t, respUpdate)
 
 	// Mine the supply commitment transaction.
-	minedBlocks := MineBlocks(t, miner, 1, expectedTxsInBlock)
+	minedBlocks := MineBlocks(t, m, 1, expectedTxsInBlock)
 	require.Len(t, minedBlocks, 1)
 
 	return minedBlocks
