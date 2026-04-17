@@ -479,11 +479,8 @@ func testCustomChannelsLiquidityEdgeCasesCore(ctx context.Context,
 	)
 	require.NoError(t.t, err)
 
-	// There should be no HTLCs present on any channel.
-	assertNumHtlcs(t.t, charlie, 0)
-	assertNumHtlcs(t.t, dave, 0)
-	assertNumHtlcs(t.t, erin, 0)
-	assertNumHtlcs(t.t, fabia, 0)
+	// Wait for the full route to quiesce.
+	assertNumHtlcsAll(t.t, 0, charlie, dave, erin, fabia)
 
 	// Now Fabia creates another invoice. We also use a fixed msat value for
 	// the invoice. Since our itest oracle evaluates every asset to about
@@ -581,7 +578,8 @@ func testCustomChannelsLiquidityEdgeCasesCore(ctx context.Context,
 	)
 	require.NoError(t.t, err)
 
-	assertNumHtlcs(t.t, dave, 0)
+	// Wait for the full route to quiesce before moving on.
+	assertNumHtlcsAll(t.t, 0, erin, dave, charlie)
 
 	logBalance(t.t, nodes, assetID, "after small manual rfq")
 

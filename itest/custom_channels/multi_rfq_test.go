@@ -144,9 +144,11 @@ func testCustomChannelsMultiRFQ(_ context.Context,
 	)
 	require.NoError(t.t, err)
 
-	assertNumHtlcs(t.t, dave, 0)
-	assertNumHtlcs(t.t, erin, 0)
-	assertNumHtlcs(t.t, yara, 0)
+	// Wait for the full route to quiesce before attempting the next
+	// payment.
+	assertNumHtlcsAll(
+		t.t, 0, charlie, dave, erin, fabia, yara, george,
+	)
 
 	logBalance(t.t, nodes, assetID, "after cancelled hodl")
 
@@ -207,8 +209,11 @@ func testCustomChannelsMultiRFQ(_ context.Context,
 	)
 	require.NoError(t.t, err)
 
-	assertNumHtlcs(t.t, charlie, 0)
-	assertNumHtlcs(t.t, fabia, 0)
+	// Wait for the full route to quiesce before attempting the next
+	// payment.
+	assertNumHtlcsAll(
+		t.t, 0, charlie, dave, erin, fabia, yara, george,
+	)
 
 	logBalance(t.t, nodes, assetID, "after multi-rfq send")
 
