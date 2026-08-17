@@ -120,6 +120,11 @@
   86400 second default instead of returning an error. Fixes
   [#2261](https://github.com/lightninglabs/taproot-assets/issues/2261).
 
+* [PR#XXXX](https://github.com/lightninglabs/taproot-assets/pull/XXXX)
+  hardens asset balance list handling against amount sums that exceed
+  the uint64 range, and bounds-checks balance subtraction in the
+  channel commitment logic.
+
 # New Features
 
 ## Functional Enhancements
