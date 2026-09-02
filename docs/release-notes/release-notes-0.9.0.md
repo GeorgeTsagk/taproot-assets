@@ -120,6 +120,11 @@
   86400 second default instead of returning an error. Fixes
   [#2261](https://github.com/lightninglabs/taproot-assets/issues/2261).
 
+* [PR#XXXX](https://github.com/lightninglabs/taproot-assets/pull/XXXX)
+  improves the robustness of the incoming amount computation in
+  `GenerateInterceptorResponse` by summing HTLC asset balances with
+  big integer arithmetic.
+
 # New Features
 
 ## Functional Enhancements
